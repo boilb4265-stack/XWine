@@ -1,79 +1,88 @@
 # Project XWine
 
-> **Status: Experimental — Pre-Hardware Verification**
-> Project XWine is an experimental research and engineering project investigating whether legitimately owned Windows PC games can execute locally on an **Xbox Series S** in **Xbox Developer Mode** using only supported application interfaces, without a remote PC or cloud streaming.
->
-> **Honesty Statement:** No Windows PC game has yet executed on physical Xbox Series S hardware through XWine. The native macOS prototype, PE32/PE32+ static inspector, Steam VDF/ACF metadata importer, SDL3 controller layer, and automated tests are implemented and verified on Apple Silicon macOS. Xbox UWP deployment (Phase 6) and in-process PE execution (Phase 7) remain **Planned**.
+> **Status: Experimental — Code-Complete Through Phase 5 + Xbox UWP Packaging Kit & Phase 7 Probe Ready (`v0.3.0`)**
+> **Honesty Boundary:** All shared C++20 subsystems, PE32+ relocation/IAT mapper, Phase 4 Win32-to-OneCoreUAP shims, Phase 5 graphics bridge & Metal harness, and all 6 automated test suites are **Implemented & Verified on Apple Silicon macOS**. The Xbox Series S UWP backend, Store assets, PowerShell build/deploy scripts, Phase 7 original Windows x64 probe, and GitHub Actions `windows-latest` MSIX workflow are **Ready to Build & Sideload**, but **on-console execution on a physical Xbox Series S remains Unverified until sideloaded via Windows SDK / CI**.
 
 ---
 
-## Key Technical Findings (Phase 1 Feasibility)
+## Building the Signed Xbox Series S `.msix` Package
 
-Full analysis: [docs/feasibility-report.md](docs/feasibility-report.md).
+Apple Silicon macOS cannot natively link `WindowsApp.lib` or run `makeappx.exe` / `signtool.exe`. Choose either supported path to produce the signed Xbox Series S Dev Mode package:
 
-1. **Unmodified Linux Wine cannot run on Xbox UWP.** Xbox OS runs a restricted Windows NT kernel (OneCoreUAP), not Linux. Wine's `ntdll/unix` layer and `wineserver` daemon depend on POSIX syscalls, Unix sockets, `fork`/`execve`, and signals unavailable in Xbox AppContainer.
-2. **DXVK and VKD3D-Proton are architecturally unsuitable as primary Xbox backends.** Xbox OS provides **native Direct3D 12 and Direct3D 11** (via D3D11On12) in UWP Game Mode and **no Vulkan ICD**. Translating Direct3D to Vulkan on Xbox would require double translation over Mesa Dozen with severe RAM and shader-stutter penalties.
-3. **Xbox Series S Developer Mode imposes a ~5,120 MiB (5 GB) RAM ceiling in UWP Game Mode** (and ~1 GB in default App Mode), even though physical hardware contains 10 GB GDDR6.
-4. **Legitimate Experimental Path (Phase 7 Hypothesis):** An in-process user-mode `x86-64` (PE32+) loader using the documented UWP `<Capability Name="codeGeneration" />` (`VirtualAllocFromApp` + `VirtualProtectFromApp` W^X transitions), custom Win32-to-OneCoreUAP shims, and native Xbox D3D12/D3D11 (`CoreWindow` swapchain adaptation), targeting original DRM-free 64-bit test binaries first.
-5. **macOS Toolchain Constraint:** Apple Silicon macOS cannot natively produce signed `.appx` / `.msix` / `.xvc` Xbox packages. Windows 10/11 x64 + Visual Studio 2022 + Windows SDK are strictly required for Phase 6 hardware packaging.
+### Option A — Automated GitHub Actions Build (Zero Local Windows PC Needed)
+Push this repository to GitHub (or trigger **Actions → Build XWine (macOS ARM64 & Xbox Series S UWP x64)**):
+- Workflow: [.github/workflows/build-xbox-uwp.yml](.github/workflows/build-xbox-uwp.yml)
+- Runs on `windows-latest` with Visual Studio 2022 + Windows SDK + vcpkg, runs all CTests, compiles `xwine-phase7-probe.exe`, and outputs the downloadable artifact:
+  - `XWine-XboxSeriesS-x64-DevMode.msix`
+  - `XWine-DevMode-SelfSigned.cer`
+  - `xwine-phase7-probe.exe`
 
----
+### Option B — Local Windows 10/11 x64 PC or VM
+```powershell
+# 1. Build, test, pack, and sign the Xbox Series S Dev Mode MSIX package
+.\scripts\build_xbox_uwp.ps1 -VcpkgRoot C:\vcpkg -Configuration Release
 
-## Implemented Components (Phase 1 & Phase 2)
+# 2. Sideload directly to your Xbox Series S over LAN via Xbox Device Portal
+.\scripts\deploy_xbox_portal.ps1 -XboxIp <XBOX_IP>
 
-| Component | Path | Status |
-| :--- | :--- | :--- |
-| Technical Feasibility & Portability Reports | `docs/` | **Implemented** |
-| Native macOS C++20 / SDL3 + FreeType Launcher (1920x1080 / 4K HiDPI) | `launcher/` | **Implemented** |
-| PE32 / PE32+ Static Metadata, Section Entropy & Import Table Inspector | `runtime/loader/` | **Implemented** |
-| Valve VDF / Steam `.acf` Metadata Importer & DRM/Anti-Cheat Classifier | `steam/` | **Implemented** |
-| SDL3 Controller Abstraction (Deadzones, Curves, Remapping, XInput Map) | `input/` | **Implemented** |
-| Sandboxed Game Library, Config Manager, Logger & Host Telemetry | `platform/`, `runtime/filesystem/` | **Implemented** |
-| Decoupled Graphics Backend & Xbox Route Assessment | `graphics/` | **Implemented** |
-| CLI Diagnostic, PE Inspection & Benchmark Tool (`xwine-diag`) | `tools/diagnostics/` | **Implemented** |
-| Automated Unit, Integration, Compatibility & Launcher Test Suites | `tests/`, `launcher/tests/` | **Implemented** |
-| Xbox Series S UWP Build, Sideload & On-Hardware Verification | `platform/xbox/`, `tools/packaging/` | **Planned (Phase 6)** |
-| In-Process x86-64 PE Loader & Win32-to-OneCoreUAP Shims | `runtime/` | **Planned (Phase 4–7)** |
+# 3. (Optional) Format/ACL-prep an external NTFS USB drive for Xbox UWP access
+.\scripts\prep_xbox_usb.ps1 -DriveLetter E
+```
+
+**Mandatory On-Console Step:** In Xbox Device Portal (`https://<xbox-ip>:11443`), open **My games & apps → Project XWine → View details** and change **App type** from **`App`** (~1 GB RAM) to **`Game`** (~5,120 MiB RAM + full Direct3D 12/11).
 
 ---
 
-## Quick Start (Apple Silicon M1 Mac)
+## Building & Running Locally on Apple Silicon Mac (M1/M2/M3/M4)
 
 ```bash
-# Install prerequisites
 brew install cmake ninja sdl3 freetype libpng
-
-# Configure & build all libraries, launcher, CLI, and tests
 ./scripts/build_macos.sh
-
-# Run full automated CTest suite
 ./scripts/run_tests.sh
 
-# Launch the native SDL3 XWine Launcher
+# Launch the native 1920x1080 / Retina HiDPI SDL3 Launcher
 ./build/launcher/xwine-launcher
 
-# Run CLI diagnostics and PE inspection
+# Run standalone Phase 5 graphics benchmark & swapchain tests
+./build/tools/graphics-bench/xwine-gfx-test
+
+# Run CLI diagnostics, PE mapping dry-run, and shim listing
 ./build/tools/diagnostics/xwine-diag sysinfo
-./build/tools/diagnostics/xwine-diag inspect /path/to/windows_binary.exe
+./build/tools/diagnostics/xwine-diag shims
+./build/tools/diagnostics/xwine-diag map /path/to/program.exe
 ./build/tools/diagnostics/xwine-diag bench
 ```
+
+---
+
+## Component Status Matrix
+
+| Phase / Component | Path | Status |
+| :--- | :--- | :--- |
+| **Phase 1:** Xbox Feasibility, Wine/Proton & Graphics Reports | `docs/` | **Implemented** |
+| **Phase 2:** Native C++20 / SDL3 + FreeType Launcher (7 views) | `launcher/` | **Implemented** |
+| **Phase 3:** PE32+ Inspector, `.reloc`/Export/TLS/Delay-Import Mapper, Virtual Registry, Sandboxed Path Virtualizer | `runtime/loader/`, `runtime/filesystem/` | **Implemented** |
+| **Phase 4:** Minimal Win32-to-OneCoreUAP Shims (`kernel32`, `user32`, `advapi32`, `xinput1_4`) & Missing API Telemetry | `runtime/windows-api/` | **Implemented** |
+| **Phase 5:** `CoreWindowSwapchainBridge`, 5 GB UMA Tracker & Independent `xwine-gfx-test` | `graphics/`, `tools/graphics-bench/` | **Implemented** |
+| **Phase 6:** Xbox UWP Platform Backend, Manifest, PNG Store Assets, PowerShell Scripts & GitHub Actions MSIX CI | `platform/xbox/`, `tools/packaging/`, `scripts/`, `.github/workflows/` | **Code-Complete (Awaiting Hardware Test)** |
+| **Phase 7:** Original 64-bit DRM-Free Windows Test Probe (`xwine-phase7-probe.c`) & `VirtualAllocFromApp` W^X Runner | `tools/phase7-probe/`, `runtime/loader/` | **Code-Complete (Awaiting Hardware Test)** |
+| **Phase 8:** Steam VDF/ACF Importer & DRM/Anti-Cheat Classifier | `steam/` | **Implemented (Metadata Only)** |
+| Unmodified Linux Wine / Native Vulkan / DXVK / Kernel Anti-Cheat / DRM Bypass | — | **Technically Unsupported** |
 
 ---
 
 ## Documentation Index
 
 - [docs/feasibility-report.md](docs/feasibility-report.md) — Phase 1 Technical Feasibility Report
-- [ARCHITECTURE.md](ARCHITECTURE.md) / [docs/architecture.md](docs/architecture.md) — Modular C++20 Architecture
-- [BUILD.md](BUILD.md) / [docs/build-macos.md](docs/build-macos.md) — Apple Silicon M1 Build Guide
-- [TESTING.md](TESTING.md) — Automated Testing & Verification Strategy
-- [LIMITATIONS.md](LIMITATIONS.md) / [docs/xbox-limitations.md](docs/xbox-limitations.md) — Platform Restrictions & Blockers
+- [docs/deployment.md](docs/deployment.md) — Step-by-Step Xbox Series S Dev Mode Build & Sideload Guide
+- [docs/xbox-limitations.md](docs/xbox-limitations.md) / [LIMITATIONS.md](LIMITATIONS.md) — Platform Restrictions & Blockers
 - [docs/wine-portability.md](docs/wine-portability.md) — Wine & Proton Dependency Audit
 - [docs/graphics-compatibility.md](docs/graphics-compatibility.md) — Direct3D / Vulkan / DXVK / D3D9On12 Analysis
-- [docs/deployment.md](docs/deployment.md) — Xbox Developer Mode Deployment Requirements
-- [ROADMAP.md](ROADMAP.md) / [docs/roadmap.md](docs/roadmap.md) — Phased Engineering Roadmap
-- [CHANGELOG.md](CHANGELOG.md) — Release & Engineering History
-
----
+- [ARCHITECTURE.md](ARCHITECTURE.md) / [docs/architecture.md](docs/architecture.md) — Software Architecture
+- [BUILD.md](BUILD.md) / [docs/build-macos.md](docs/build-macos.md) — Build Instructions
+- [TESTING.md](TESTING.md) — Automated Verification Suites (6 CTest suites / 20 tests)
+- [ROADMAP.md](ROADMAP.md) / [docs/roadmap.md](docs/roadmap.md) — Development Roadmap
+- [CHANGELOG.md](CHANGELOG.md) — Version History
 
 ## License
 

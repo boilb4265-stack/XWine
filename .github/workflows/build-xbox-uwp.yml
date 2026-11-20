@@ -1,0 +1,58 @@
+name: Build XWine (macOS ARM64 & Xbox Series S UWP x64)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-arm64:
+    name: macOS Apple Silicon Build & Tests
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Homebrew Dependencies
+        run: brew install cmake ninja sdl3 freetype libpng
+
+      - name: Configure & Build
+        run: ./scripts/build_macos.sh
+
+      - name: Execute Automated Tests
+        run: ./scripts/run_tests.sh
+
+      - name: Run Standalone Graphics & Diagnostics Verification
+        run: |
+          ./build/tools/diagnostics/xwine-diag sysinfo
+          ./build/tools/diagnostics/xwine-diag bench
+          ./build/tools/graphics-bench/xwine-gfx-test
+
+  xbox-series-s-uwp:
+    name: Windows SDK -> Xbox Series S Dev Mode MSIX (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC Developer Command Prompt (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build, Test, Pack & Sign Xbox Series S MSIX
+        shell: pwsh
+        run: |
+          .\scripts\build_xbox_uwp.ps1 -VcpkgRoot "$env:VCPKG_INSTALLATION_ROOT" -Configuration Release
+
+      - name: Upload Ready-to-Sideload Xbox Series S Dev Mode Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: XWine-XboxSeriesS-x64-DevMode
+          path: |
+            dist/xbox-uwp/XWine-XboxSeriesS-x64-DevMode.msix
+            dist/xbox-uwp/XWine-DevMode-SelfSigned.cer
+            dist/xbox-uwp/staging/Probes/xwine-phase7-probe.exe

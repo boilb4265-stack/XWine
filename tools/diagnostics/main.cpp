@@ -4,6 +4,8 @@
 #include "xwine/platform/platform.hpp"
 #include "xwine/platform/xbox_capabilities.hpp"
 #include "xwine/runtime/pe_inspector.hpp"
+#include "xwine/runtime/pe_loader.hpp"
+#include "xwine/runtime/win32_shims.hpp"
 #include "xwine/steam/steam_library.hpp"
 #include "xwine/steam/vdf_parser.hpp"
 
@@ -15,10 +17,12 @@
 namespace {
 
 void print_usage() {
-    std::cout << "xwine-diag — Project XWine Diagnostic & PE Inspection CLI (Experimental)\n"
+    std::cout << "xwine-diag — Project XWine Diagnostic, PE Mapper & Benchmark CLI (Experimental)\n"
               << "Usage:\n"
               << "  xwine-diag sysinfo                 Show host & Xbox Series S target profile\n"
               << "  xwine-diag inspect <file.exe>      Static non-executing PE32/PE32+ analysis\n"
+              << "  xwine-diag map <file.exe>          Phase 3/4 dry-run section, .reloc, IAT & W^X mapping\n"
+              << "  xwine-diag shims                   List implemented Phase 4 Win32-to-OneCoreUAP shims\n"
               << "  xwine-diag steam <steamapps_dir>   Scan & parse Steam VDF/ACF manifests\n"
               << "  xwine-diag bench                   Run local subsystem micro-benchmarks\n";
 }
@@ -67,10 +71,6 @@ int cmd_inspect(const std::string& file_path) {
               << "Subsystem         : " << xwine::runtime::to_string(rep.subsystem) << "\n"
               << "Entry Point RVA   : 0x" << std::hex << rep.entry_point_rva
               << " | ImageBase: 0x" << rep.image_base << std::dec << "\n"
-              << "Security Flags    : ASLR=" << rep.security.dynamic_base_aslr
-              << " DEP=" << rep.security.nx_compat_dep
-              << " CFG=" << rep.security.control_flow_guard
-              << " CLR=" << rep.security.has_clr_dotnet_header << "\n"
               << "Sections (" << rep.sections.size() << "):\n";
 
     for (const auto& s : rep.sections) {
@@ -96,6 +96,44 @@ int cmd_inspect(const std::string& file_path) {
     return 0;
 }
 
+int cmd_map(const std::string& file_path) {
+    auto alloc = xwine::runtime::create_platform_pe_allocator(xwine::platform::kXboxDevModeGameRamCapBytes);
+    xwine::runtime::Win32ShimEnvironment shims(std::filesystem::temp_directory_path() / "xwine_diag_prefix");
+    auto mapped = xwine::runtime::PeImageMapper::map_pe_file(file_path, *alloc, shims);
+    if (!mapped.mapped) {
+        std::cerr << "PE mapping failed: " << mapped.error_message << "\n";
+        return 2;
+    }
+
+    std::cout << "=== XWine Phase 3/4 PE32+ Image Mapping Report ===\n"
+              << "Mapped Image Size     : " << mapped.image_size << " bytes\n"
+              << "Entry Point RVA       : 0x" << std::hex << mapped.entry_point_rva << std::dec << "\n"
+              << "Relocations Applied   : " << mapped.relocations_applied << "\n"
+              << "Exports Parsed        : " << mapped.extended_dirs.exports.size() << "\n"
+              << "Delay-Load DLLs       : " << mapped.extended_dirs.delay_load_dlls.size() << "\n"
+              << "W^X Section Updates   : " << mapped.wx_transitions_applied << "\n"
+              << "Resolved Phase 4 Shims: " << mapped.imports_resolved << "\n"
+              << "Unresolved Symbols    : " << mapped.imports_unresolved << "\n";
+    for (const auto& s : mapped.unresolved_symbols) {
+        std::cout << "  [MISSING] " << s << "\n";
+    }
+    auto exec_res = xwine::runtime::PeImageMapper::execute_mapped_x64(mapped, *alloc, shims);
+    std::cout << "Execution Attempt     : " << (exec_res.executed ? "EXECUTED" : "NOT EXECUTED")
+              << " — " << exec_res.status_message << "\n";
+    alloc->release_image(mapped.base_address, mapped.image_size);
+    return 0;
+}
+
+int cmd_shims() {
+    xwine::runtime::Win32ShimEnvironment shims(std::filesystem::temp_directory_path() / "xwine_diag_prefix");
+    auto list = shims.list_implemented_shims();
+    std::cout << "=== XWine Phase 4 Implemented Win32-to-OneCoreUAP Shims (" << list.size() << ") ===\n";
+    for (const auto& s : list) {
+        std::cout << "  - " << s << "\n";
+    }
+    return 0;
+}
+
 int cmd_steam(const std::string& dir) {
     auto scan = xwine::steam::SteamLibraryImporter::scan_steamapps_directory(dir);
     std::cout << "=== XWine Steam Metadata Scan ===\n"
@@ -114,7 +152,6 @@ int cmd_steam(const std::string& dir) {
 int cmd_bench() {
     using clock = std::chrono::steady_clock;
 
-    // 1. VDF Parser Benchmark
     const std::string sample_vdf =
         "\"AppState\"\n{\n\"appid\" \"413150\"\n\"name\" \"Stardew Valley\"\n"
         "\"installdir\" \"Stardew Valley\"\n\"SizeOnDisk\" \"681574400\"\n}\n";
@@ -126,7 +163,6 @@ int cmd_bench() {
     }
     double vdf_ms = std::chrono::duration<double, std::milli>(clock::now() - t0).count();
 
-    // 2. Controller Deadzone & Curve Math Benchmark
     auto t1 = clock::now();
     constexpr int kInputIters = 100000;
     double accum = 0.0;
@@ -156,6 +192,8 @@ int main(int argc, char** argv) {
     const std::string cmd = argv[1];
     if (cmd == "sysinfo") return cmd_sysinfo();
     if (cmd == "inspect" && argc >= 3) return cmd_inspect(argv[2]);
+    if (cmd == "map" && argc >= 3) return cmd_map(argv[2]);
+    if (cmd == "shims") return cmd_shims();
     if (cmd == "steam" && argc >= 3) return cmd_steam(argv[2]);
     if (cmd == "bench") return cmd_bench();
 

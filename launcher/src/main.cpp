@@ -76,6 +76,7 @@ int main(int argc, char** argv) {
         logger.set_min_level(ctx.config.config().log_level);
 
         ctx.library.set_sandbox_root(ctx.data_dir / "games");
+        ctx.runtime.configure_prefix(ctx.data_dir / "prefix");
         std::string lib_err;
         if (!ctx.library.load_from_file(ctx.data_dir / "library.json", &lib_err) ||
             ctx.library.all_games().empty()) {
