@@ -55,7 +55,7 @@ struct SDL_Window {
     int h = 1080;
 };
 
-struct SDL_Texture {
+struct XWineSoftTexture {
     int w = 0;
     int h = 0;
     std::vector<uint8_t> rgba;
@@ -156,7 +156,7 @@ extern "C" {
 
 bool SDL_SetRenderDrawBlendMode(SDL_Renderer*, SDL_BlendMode) { return true; }
 bool SDL_SetRenderLogicalPresentation(SDL_Renderer*, int, int, SDL_RendererLogicalPresentation) { return true; }
-void SDL_DestroyTexture(SDL_Texture* t) { delete t; }
+void SDL_DestroyTexture(SDL_Texture* t) { delete reinterpret_cast<XWineSoftTexture*>(t); }
 
 SDL_Surface* SDL_CreateSurfaceFrom(int width, int height, SDL_PixelFormat format, void* pixels, int pitch) {
     auto* s = new SDL_Surface{};
@@ -172,7 +172,7 @@ void SDL_DestroySurface(SDL_Surface* surface) { delete surface; }
 
 SDL_Texture* SDL_CreateTextureFromSurface(SDL_Renderer*, SDL_Surface* surface) {
     if (!surface || !surface->pixels) return nullptr;
-    auto* t = new SDL_Texture{};
+    auto* t = new XWineSoftTexture{};
     t->w = surface->w;
     t->h = surface->h;
     t->rgba.resize(static_cast<size_t>(t->w * t->h * 4));
@@ -181,7 +181,7 @@ SDL_Texture* SDL_CreateTextureFromSurface(SDL_Renderer*, SDL_Surface* surface) {
                     static_cast<const uint8_t*>(surface->pixels) + static_cast<size_t>(y * surface->pitch),
                     static_cast<size_t>(t->w * 4));
     }
-    return t;
+    return reinterpret_cast<SDL_Texture*>(t);
 }
 
 bool SDL_SetTextureScaleMode(SDL_Texture*, SDL_ScaleMode) { return true; }
@@ -232,7 +232,8 @@ bool SDL_RenderGeometry(SDL_Renderer* r, SDL_Texture*, const SDL_Vertex* vertice
     return true;
 }
 
-bool SDL_RenderTexture(SDL_Renderer* r, SDL_Texture* t, const SDL_FRect*, const SDL_FRect* dst) {
+bool SDL_RenderTexture(SDL_Renderer* r, SDL_Texture* raw_tex, const SDL_FRect*, const SDL_FRect* dst) {
+    auto* t = reinterpret_cast<XWineSoftTexture*>(raw_tex);
     if (!r || !t || !dst || dst->w <= 0.5f || dst->h <= 0.5f) return false;
     const int clip_x0 = r->has_clip ? std::max(0, r->clip.x) : 0;
     const int clip_y0 = r->has_clip ? std::max(0, r->clip.y) : 0;
