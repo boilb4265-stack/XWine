@@ -4,6 +4,7 @@
 #include "xwine/runtime/path_virtualizer.hpp"
 #include "xwine/runtime/virtual_registry.hpp"
 
+#include <csetjmp>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -115,6 +116,8 @@ public:
     void request_exit_process(uint32_t code);
     bool exit_requested() const { return exit_requested_; }
     uint32_t exit_code() const { return exit_code_; }
+    void set_exit_jump_buffer(std::jmp_buf* buf) { exit_jmp_buf_ = buf; }
+    std::jmp_buf* exit_jump_buffer() const { return exit_jmp_buf_; }
 
     // --- user32.dll minimal in-process virtual window & message pump ---
     bool register_window_class(const std::string& class_name);
@@ -171,6 +174,7 @@ private:
     std::vector<std::string> debug_messages_;
     bool exit_requested_ = false;
     uint32_t exit_code_ = 0;
+    std::jmp_buf* exit_jmp_buf_ = nullptr;
 
     std::vector<std::string> window_classes_;
     std::map<uint64_t, VirtualWindow> windows_;

@@ -67,7 +67,12 @@ void xwine_shim_OutputDebugStringW(const uint16_t* wstr) {
 }
 
 void xwine_shim_ExitProcess(uint32_t exit_code) {
-    if (g_active_env) g_active_env->request_exit_process(exit_code);
+    if (g_active_env) {
+        g_active_env->request_exit_process(exit_code);
+        if (auto* jb = g_active_env->exit_jump_buffer()) {
+            std::longjmp(*jb, 1);
+        }
+    }
 }
 
 uintptr_t xwine_shim_GetProcessHeap() {

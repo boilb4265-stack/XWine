@@ -2,6 +2,7 @@
 #include "xwine/platform/logger.hpp"
 
 #include <algorithm>
+#include <csetjmp>
 #include <cstring>
 #include <fstream>
 
@@ -515,10 +516,16 @@ PeExecutionResult PeImageMapper::execute_mapped_x64(const MappedPeImage& image,
 
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
     using EntryFn = uint32_t (*)();
+    std::jmp_buf exit_jmp;
+    shims.set_exit_jump_buffer(&exit_jmp);
     Win32ShimEnvironment::set_active_instance(&shims);
     auto entry = reinterpret_cast<EntryFn>(image.base_address + image.entry_point_rva);
     platform::Logger::instance().info("PeLoader", "Invoking mapped x86-64 PE32+ entry point (Phase 7 experimental)");
-    const uint32_t ret = entry();
+    uint32_t ret = 0;
+    if (setjmp(exit_jmp) == 0) {
+        ret = entry();
+    }
+    shims.set_exit_jump_buffer(nullptr);
     Win32ShimEnvironment::set_active_instance(nullptr);
     res.executed = true;
     res.exit_code = shims.exit_requested() ? static_cast<int32_t>(shims.exit_code()) : static_cast<int32_t>(ret);

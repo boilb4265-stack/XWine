@@ -93,10 +93,10 @@ unsigned int XWineProbeMain(void) {
 
     QueryPerformanceCounter(&t1);
     if (t1.QuadPart >= t0.QuadPart) {
-        OutputDebugStringA("[XWinePhase7Probe] All Phase 7 checks passed. Calling ExitProcess(0).\n");
+        OutputDebugStringA("[XWinePhase7Probe] All Phase 7 checks passed. Returning 0 cleanly.\n");
     }
 
-    ExitProcess(0);
+    SetLastError(0);
     return 0;
 }
 
