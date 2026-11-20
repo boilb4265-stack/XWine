@@ -8,7 +8,10 @@
 
 namespace xwine::launcher {
 
-LauncherState::LauncherState(LauncherAppContext& ctx) : ctx_(ctx) {}
+LauncherState::LauncherState(LauncherAppContext& ctx) : ctx_(ctx) {
+    ctx_.library.purge_placeholder_fixtures();
+    scan_local_apps_and_usb();
+}
 
 void LauncherState::set_active_tab(NavTab tab) {
     int idx = std::clamp(static_cast<int>(tab), 0, static_cast<int>(NavTab::Count) - 1);
@@ -96,26 +99,26 @@ void LauncherState::execute_detail_action(int action_idx) {
     press_anim_ = 1.0f;
 
     if (action_idx == 0) {
-        // Honest PE inspection & launch feasibility check — executes Phase 7 probe ONLY when
-        // running on Windows/Xbox x64 and all imports resolve to implemented Phase 4 shims!
+        // Honest PE inspection & launch feasibility check — executes any 64-bit PE32+ executable
+        // on Windows/Xbox x64 when all imports resolve via Phase 4 shims or OneCoreUAP host exports!
         ctx_.library.record_inspection_event(game->id);
-        std::filesystem::path probe_candidate;
+        std::filesystem::path exe_candidate;
         if (!game->install_directory.empty() && !game->executable_relative_path.empty()) {
-            probe_candidate = std::filesystem::path(game->install_directory) / game->executable_relative_path;
+            exe_candidate = std::filesystem::path(game->install_directory) / game->executable_relative_path;
         }
         std::error_code ec;
-        if (game->id == "xwine-phase7-probe" && !probe_candidate.empty() &&
-            std::filesystem::exists(probe_candidate, ec)) {
+        if (!exe_candidate.empty() && std::filesystem::exists(exe_candidate, ec)) {
             const bool gm = ctx_.config.config().runtime.xbox_target_mode == "GameMode_5GB";
             const uint64_t budget = ctx_.platform->target_xbox_series_s_profile(gm).app_usable_ram_bytes;
-            last_launch_report_ = ctx_.runtime.run_phase7_probe(probe_candidate, budget);
-            if (last_launch_report_->executed) {
+            auto probe_rep = ctx_.runtime.run_phase7_probe(exe_candidate, budget);
+            if (probe_rep.executed) {
+                last_launch_report_ = probe_rep;
                 game->compatibility = runtime::CompatibilityRating::Verified_Xbox;
                 game->compatibility_summary =
                     "Executed natively in-process via VirtualAllocFromApp/VirtualProtectFromApp (exit code " +
                     std::to_string(last_launch_report_->exit_code) + ").";
                 save_all_state();
-                show_toast("Phase 7 Probe Executed Natively (Exit Code " +
+                show_toast("Executed " + exe_candidate.filename().string() + " Natively (Exit Code " +
                                std::to_string(last_launch_report_->exit_code) + ")",
                            false, 5.0f);
                 return;
@@ -149,15 +152,43 @@ void LauncherState::execute_detail_action(int action_idx) {
 }
 
 void LauncherState::scan_configured_steam_library() {
-    const std::string& steam_path = ctx_.config.config().storage.steam_library_path;
-    platform::Logger::instance().info("Steam", "Scanning Steam library path: " + steam_path);
-    last_steam_scan_ = steam::SteamLibraryImporter::scan_steamapps_directory(steam_path);
+    std::vector<std::filesystem::path> candidates;
+    const std::string& configured = ctx_.config.config().storage.steam_library_path;
+    if (!configured.empty()) {
+        candidates.emplace_back(configured);
+    }
+    candidates.push_back(ctx_.data_dir / "steamapps");
+    // Also check removable USB drives on Xbox Series S (D:\..G:\)
+    for (char drv : {'D', 'E', 'F', 'G'}) {
+        candidates.emplace_back(std::string(1, drv) + ":\\XWineGames\\steamapps");
+        candidates.emplace_back(std::string(1, drv) + ":\\SteamLibrary\\steamapps");
+    }
 
-    if (!last_steam_scan_.root_found) {
-        show_toast("Steam directory not found at configured path (try Sample Fixtures).", true, 4.5f);
+    steam::SteamScanReport combined;
+    std::error_code ec;
+    for (const auto& dir : candidates) {
+        if (!std::filesystem::exists(dir, ec) || !std::filesystem::is_directory(dir, ec)) continue;
+        auto rep = steam::SteamLibraryImporter::scan_steamapps_directory(dir);
+        if (rep.root_found) {
+            combined.root_found = true;
+            for (const auto& l : rep.scanned_libraries) combined.scanned_libraries.push_back(l);
+            for (const auto& m : rep.manifests) {
+                bool dup = false;
+                for (const auto& em : combined.manifests) {
+                    if (em.app_id == m.app_id) { dup = true; break; }
+                }
+                if (!dup) combined.manifests.push_back(m);
+            }
+        }
+    }
+
+    if (!combined.root_found || combined.manifests.empty()) {
+        scan_local_apps_and_usb();
+        show_toast("No Steam library found on USB/LocalState; scanned local .exe apps.", true, 4.0f);
         return;
     }
 
+    last_steam_scan_ = std::move(combined);
     int imported = 0;
     for (const auto& m : last_steam_scan_.manifests) {
         auto entry = steam::SteamLibraryImporter::to_game_entry(m, true);
@@ -165,8 +196,64 @@ void LauncherState::scan_configured_steam_library() {
             ++imported;
         }
     }
+    scan_local_apps_and_usb();
     save_all_state();
-    show_toast("Imported " + std::to_string(imported) + " Steam manifest(s) (metadata only).", false, 4.0f);
+    show_toast("Imported " + std::to_string(imported) + " Steam manifest(s) & scanned local apps.", false, 4.0f);
+}
+
+void LauncherState::scan_local_apps_and_usb() {
+    std::vector<std::filesystem::path> app_roots = {
+        std::filesystem::path("Probes"),
+        ctx_.data_dir / "games",
+        ctx_.data_dir / "LocalApps"
+    };
+    std::error_code ec;
+    std::filesystem::create_directories(ctx_.data_dir / "games", ec);
+    std::filesystem::create_directories(ctx_.data_dir / "LocalApps", ec);
+    for (char drv : {'D', 'E', 'F', 'G'}) {
+        app_roots.emplace_back(std::string(1, drv) + ":\\XWineGames");
+        app_roots.emplace_back(std::string(1, drv) + ":\\LocalApps");
+    }
+
+    int discovered_count = 0;
+    for (const auto& root : app_roots) {
+        if (!std::filesystem::exists(root, ec) || !std::filesystem::is_directory(root, ec)) continue;
+        auto exes = runtime::LibraryManager::discover_executables(root, 48);
+        for (const auto& exe_path : exes) {
+            const std::string fname = exe_path.filename().string();
+            if (fname == "xwine-phase7-probe.exe") continue; // Already seeded with primary ID
+            std::string stem = exe_path.stem().string();
+            std::string id = "local-" + stem;
+            for (char& c : id) {
+                if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_') c = '-';
+            }
+
+            runtime::GameEntry g;
+            g.id = id;
+            g.title = stem + " (Local EXE)";
+            g.developer = "Local / USB Executable";
+            g.publisher = exe_path.parent_path().string();
+            g.genre = "Local Windows App";
+            g.source = "LocalApp";
+            g.install_directory = exe_path.parent_path().string();
+            g.executable_relative_path = fname;
+            g.accent_color_rgb = 0x22D3EE;
+            g.size_on_disk_bytes = std::filesystem::file_size(exe_path, ec);
+            g.installed = true;
+            g.favorite = true;
+            g.drm_free_declared = true;
+            g.added_epoch_sec = 1700000000ULL;
+            g.last_played_epoch_sec = 1700000000ULL;
+            if (ctx_.library.add_or_update_game(g)) {
+                ctx_.library.inspect_game_executable(g.id);
+                ++discovered_count;
+            }
+        }
+    }
+    if (discovered_count > 0) {
+        save_all_state();
+        show_toast("Discovered " + std::to_string(discovered_count) + " local Windows .exe app(s)!", false, 4.0f);
+    }
 }
 
 void LauncherState::load_sample_steam_manifests() {
@@ -452,7 +539,14 @@ void LauncherState::handle_action(input::UiAction action) {
             if (action == input::UiAction::Confirm) {
                 scan_configured_steam_library();
             } else if (action == input::UiAction::SecondaryX) {
-                load_sample_steam_manifests();
+                scan_local_apps_and_usb();
+            } else if (action == input::UiAction::TertiaryY) {
+                if (!last_steam_scan_.manifests.empty() &&
+                    steam_selected_idx_ >= 0 &&
+                    static_cast<size_t>(steam_selected_idx_) < last_steam_scan_.manifests.size()) {
+                    const auto& m = last_steam_scan_.manifests[static_cast<size_t>(steam_selected_idx_)];
+                    open_game_detail("steam-" + std::to_string(m.app_id));
+                }
             } else if (action == input::UiAction::NavUp) {
                 steam_selected_idx_ = std::max(0, steam_selected_idx_ - 1);
             } else if (action == input::UiAction::NavDown) {

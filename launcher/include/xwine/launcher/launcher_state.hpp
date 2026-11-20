@@ -107,6 +107,7 @@ public:
     int steam_selected_index() const { return steam_selected_idx_; }
     void scan_configured_steam_library();
     void load_sample_steam_manifests();
+    void scan_local_apps_and_usb();
 
     // Compatibility & Runtimes scroll
     int compat_scroll_offset() const { return compat_scroll_; }

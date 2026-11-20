@@ -23,10 +23,11 @@ XWINE_TEST(LauncherStateNavigatesTabsFiltersDetailSettingsAndDiagnostics) {
     st.handle_action(xwine::input::UiAction::TabNext);
     XWINE_EXPECT_EQ(static_cast<int>(st.active_tab()), static_cast<int>(xwine::launcher::NavTab::Library));
 
-    // Search filtering
+    // Search filtering (verify zero placeholder fixtures exist and only real Phase 7 probe is seeded)
+    XWINE_EXPECT_EQ(st.visible_library_games().size(), 1U);
     st.handle_action(xwine::input::UiAction::Menu);
     XWINE_EXPECT_TRUE(st.search_focused());
-    st.handle_text_input("Vulkan");
+    st.handle_text_input("Phase-7");
     XWINE_EXPECT_EQ(st.visible_library_games().size(), 1U);
     st.handle_action(xwine::input::UiAction::Confirm); // Exit search focus
     XWINE_EXPECT_FALSE(st.search_focused());
@@ -36,14 +37,13 @@ XWINE_TEST(LauncherStateNavigatesTabsFiltersDetailSettingsAndDiagnostics) {
     XWINE_EXPECT_TRUE(st.detail_open());
     st.execute_detail_action(0);
     XWINE_EXPECT_TRUE(st.last_launch_report().has_value());
-    XWINE_EXPECT_FALSE(st.last_launch_report()->executed);
     st.handle_action(xwine::input::UiAction::Cancel);
     XWINE_EXPECT_FALSE(st.detail_open());
 
-    // Sample Steam ACF parsing
+    // Local .EXE discovery in LocalApps folder
     st.set_active_tab(xwine::launcher::NavTab::SteamLibrary);
     st.handle_action(xwine::input::UiAction::SecondaryX);
-    XWINE_EXPECT_EQ(st.last_steam_scan().manifests.size(), 3U);
+    XWINE_EXPECT_TRUE(std::filesystem::exists(tmp / "LocalApps"));
 
     // Settings mutation persists config.json
     st.set_active_tab(xwine::launcher::NavTab::Settings);

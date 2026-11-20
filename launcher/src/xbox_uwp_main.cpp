@@ -26,6 +26,8 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.ApplicationModel.Core.h>
 #include <winrt/Windows.UI.Core.h>
+#include <winrt/Windows.UI.Input.h>
+#include <winrt/Windows.System.h>
 #include <winrt/Windows.Storage.h>
 
 #include "xwine/input/input_manager.hpp"
@@ -314,11 +316,90 @@ struct XWineXboxFrameworkView : implements<XWineXboxFrameworkView, IFrameworkVie
     ComPtr<IDXGISwapChain1> swapchain_;
     ComPtr<ID3D11Texture2D> staging_tex_;
 
+    // Queued Keyboard + Mouse events from CoreWindow
+    std::vector<xwine::input::UiAction> queued_key_actions_;
+    std::string queued_text_input_;
+    bool queued_backspace_ = false;
+    bool queued_mouse_click_ = false;
+    float mouse_x_ = 960.0f;
+    float mouse_y_ = 540.0f;
+    bool mouse_active_ = false;
+    bool search_focused_ref_ = false;
+
     void Initialize(CoreApplicationView const&) {}
 
     void SetWindow(CoreWindow const& window) {
         window_ = window;
         window_.Closed([this](auto&&, auto&&) { window_closed_ = true; });
+
+        // 1. USB / Wireless Keyboard KeyDown handler (Arrows, WASD, Enter, Esc, Tab, Q/E, X/Y, F, Backspace)
+        window_.KeyDown([this](CoreWindow const&, KeyEventArgs const& args) {
+            using winrt::Windows::System::VirtualKey;
+            const auto vk = args.VirtualKey();
+            if (search_focused_ref_) {
+                if (vk == VirtualKey::Escape) queued_key_actions_.push_back(xwine::input::UiAction::Cancel);
+                else if (vk == VirtualKey::Enter) queued_key_actions_.push_back(xwine::input::UiAction::Confirm);
+                else if (vk == VirtualKey::Back) queued_backspace_ = true;
+                return;
+            }
+            switch (vk) {
+                case VirtualKey::Up:
+                case VirtualKey::W:      queued_key_actions_.push_back(xwine::input::UiAction::NavUp); break;
+                case VirtualKey::Down:
+                case VirtualKey::S:      queued_key_actions_.push_back(xwine::input::UiAction::NavDown); break;
+                case VirtualKey::Left:
+                case VirtualKey::A:      queued_key_actions_.push_back(xwine::input::UiAction::NavLeft); break;
+                case VirtualKey::Right:
+                case VirtualKey::D:      queued_key_actions_.push_back(xwine::input::UiAction::NavRight); break;
+                case VirtualKey::Enter:
+                case VirtualKey::Space:  queued_key_actions_.push_back(xwine::input::UiAction::Confirm); break;
+                case VirtualKey::Escape:
+                case VirtualKey::Back:   queued_key_actions_.push_back(xwine::input::UiAction::Cancel); break;
+                case VirtualKey::X:      queued_key_actions_.push_back(xwine::input::UiAction::SecondaryX); break;
+                case VirtualKey::Y:      queued_key_actions_.push_back(xwine::input::UiAction::TertiaryY); break;
+                case VirtualKey::Q:      queued_key_actions_.push_back(xwine::input::UiAction::TabPrev); break;
+                case VirtualKey::E:
+                case VirtualKey::Tab:    queued_key_actions_.push_back(xwine::input::UiAction::TabNext); break;
+                case VirtualKey::F:      queued_key_actions_.push_back(xwine::input::UiAction::Menu); break;
+                case VirtualKey::F1:     queued_key_actions_.push_back(xwine::input::UiAction::View); break;
+                default: break;
+            }
+        });
+
+        // 2. USB Keyboard CharacterReceived handler (for typing into Search bar)
+        window_.CharacterReceived([this](CoreWindow const&, CharacterReceivedEventArgs const& args) {
+            if (!search_focused_ref_) return;
+            const uint32_t code = args.KeyCode();
+            if (code >= 0x20 && code < 0x7F) {
+                queued_text_input_.push_back(static_cast<char>(code));
+            }
+        });
+
+        // 3. USB Mouse PointerMoved & PointerPressed handlers (scaled to 1920x1080 logical canvas)
+        auto update_mouse_pos = [this](PointerEventArgs const& args) {
+            const auto pt = args.CurrentPoint().Position();
+            const auto bounds = window_.Bounds();
+            const float bw = (bounds.Width > 1.0f) ? bounds.Width : 1920.0f;
+            const float bh = (bounds.Height > 1.0f) ? bounds.Height : 1080.0f;
+            mouse_x_ = std::clamp((pt.X / bw) * 1920.0f, 0.0f, 1919.0f);
+            mouse_y_ = std::clamp((pt.Y / bh) * 1080.0f, 0.0f, 1079.0f);
+            mouse_active_ = true;
+        };
+
+        window_.PointerMoved([update_mouse_pos](CoreWindow const&, PointerEventArgs const& args) {
+            update_mouse_pos(args);
+        });
+
+        window_.PointerPressed([this, update_mouse_pos](CoreWindow const&, PointerEventArgs const& args) {
+            update_mouse_pos(args);
+            const auto props = args.CurrentPoint().Properties();
+            if (props.IsLeftButtonPressed()) {
+                queued_mouse_click_ = true;
+            } else if (props.IsRightButtonPressed()) {
+                queued_key_actions_.push_back(xwine::input::UiAction::Cancel);
+            }
+        });
+
         init_d3d11_for_corewindow();
     }
 
@@ -419,11 +500,30 @@ struct XWineXboxFrameworkView : implements<XWineXboxFrameworkView, IFrameworkVie
         auto last_tick = std::chrono::steady_clock::now();
 
         while (!window_closed_) {
+            search_focused_ref_ = state.search_focused();
             window_.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
 
             const auto frame_start = std::chrono::steady_clock::now();
             const float dt = std::chrono::duration<float>(frame_start - last_tick).count();
             last_tick = frame_start;
+
+            // Dispatch queued USB Keyboard & Mouse events from CoreWindow
+            if (!queued_text_input_.empty()) {
+                state.handle_text_input(queued_text_input_);
+                queued_text_input_.clear();
+            }
+            if (queued_backspace_) {
+                state.handle_backspace();
+                queued_backspace_ = false;
+            }
+            for (auto act : queued_key_actions_) {
+                state.handle_action(act);
+            }
+            queued_key_actions_.clear();
+            if (queued_mouse_click_) {
+                ui.handle_mouse_click(mouse_x_, mouse_y_);
+                queued_mouse_click_ = false;
+            }
 
             // Poll Xbox Series S controller via XInputGetState (xinput1_4.dll)
             XINPUT_STATE xs{};
@@ -481,6 +581,27 @@ struct XWineXboxFrameworkView : implements<XWineXboxFrameworkView, IFrameworkVie
 
             state.update_animations(dt);
             ui.render(state, input, 1.0f);
+
+            // Render crisp software mouse cursor on Xbox when USB mouse has moved
+            if (mouse_active_) {
+                const int mx = static_cast<int>(mouse_x_);
+                const int my = static_cast<int>(mouse_y_);
+                for (int dy = 0; dy < 16; ++dy) {
+                    const int row_w = std::min(12, dy + 1);
+                    for (int dx = 0; dx < row_w; ++dx) {
+                        const int px = mx + dx;
+                        const int py = my + dy;
+                        if (px >= 0 && px < 1920 && py >= 0 && py < 1080) {
+                            uint8_t* p = sw_renderer.pixels.data() + static_cast<size_t>((py * 1920 + px) * 4);
+                            const bool border = (dx == 0 || dx == row_w - 1 || dy == 15);
+                            p[0] = border ? 34  : 242;
+                            p[1] = border ? 211 : 245;
+                            p[2] = border ? 238 : 250;
+                            p[3] = 255;
+                        }
+                    }
+                }
+            }
 
             if (swapchain_ && d3d_ctx_ && staging_tex_) {
                 d3d_ctx_->UpdateSubresource(staging_tex_.Get(), 0, nullptr,

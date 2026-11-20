@@ -1155,8 +1155,6 @@ void UiRenderer::draw_game_detail_view(LauncherState& state) {
 }
 
 void UiRenderer::draw_steam_view(LauncherState& state) {
-    const auto& steam_path = state.context().config.config().storage.steam_library_path;
-
     // Clean flat title + primary/secondary actions (no nested boxes)
     draw_text("Steam library metadata", kMarginX, 156, 28, kTextPrimary);
     draw_text("Parses libraryfolders.vdf and appmanifest_*.acf for owned metadata only — never bypasses Steam DRM or anti-cheat",
@@ -1165,21 +1163,22 @@ void UiRenderer::draw_steam_view(LauncherState& state) {
     const float right_edge = kMarginX + kCanvasW;
     SDL_FRect btn_scan{right_edge - 436, 160, 212, 42};
     draw_rounded_rect(btn_scan, 8.0f, kTextPrimary);
-    draw_text_centered("Scan local Steam", btn_scan, 14, kChromeBar);
+    draw_text_centered("Scan Steam & USB", btn_scan, 14, kChromeBar);
     hit_regions_.push_back({btn_scan, [&state]() { state.scan_configured_steam_library(); }});
 
-    SDL_FRect btn_sample{right_edge - 212, 160, 212, 42};
-    draw_rounded_rect(btn_sample, 8.0f, kSurfaceElev);
-    draw_rounded_border(btn_sample, 8.0f, 1.0f, kHairlineStrong);
-    draw_text_centered("Parse sample ACF", btn_sample, 14, kTextPrimary);
-    hit_regions_.push_back({btn_sample, [&state]() { state.load_sample_steam_manifests(); }});
+    SDL_FRect btn_local{right_edge - 212, 160, 212, 42};
+    draw_rounded_rect(btn_local, 8.0f, kSurfaceActive);
+    draw_rounded_border(btn_local, 8.0f, 1.0f, kAccentCyan);
+    draw_text_centered("Scan Local .EXE Apps", btn_local, 14, kTextPrimary);
+    hit_regions_.push_back({btn_local, [&state]() { state.scan_local_apps_and_usb(); }});
 
     // Path bar
     SDL_FRect path_bar{kMarginX, 232, kCanvasW, 48};
     draw_rounded_rect(path_bar, 8.0f, kSurface);
     draw_rounded_border(path_bar, 8.0f, 1.0f, kHairline);
-    draw_text("Configured steamapps path", kMarginX + 20, 248, 13, kTextMuted);
-    draw_text(steam_path.empty() ? "Not configured" : steam_path, kMarginX + 228, 247, 14, kTextPrimary, true);
+    draw_text("Local Apps / Steam USB paths", kMarginX + 20, 248, 13, kTextMuted);
+    draw_text((state.context().data_dir / "LocalApps").string() + "  ·  D:\\LocalApps  ·  D:\\XWineGames\\steamapps",
+              kMarginX + 248, 247, 14, kTextPrimary, true);
 
     // Table panel (app-screens.md §7: hairline rows, aligned columns, right-aligned numbers)
     SDL_FRect table{kMarginX, 304, kCanvasW, 672};
@@ -1191,12 +1190,11 @@ void UiRenderer::draw_steam_view(LauncherState& state) {
               kMarginX + 24, 326, 16, kTextPrimary);
 
     if (scan.manifests.empty()) {
-        draw_text_centered("No Steam manifests scanned in this session", {kMarginX, 540, kCanvasW, 36}, 20, kTextPrimary);
-        draw_text_centered("Use Scan local Steam to inspect an existing Steam folder, or Parse sample ACF to verify the Valve VDF parser",
-                           {kMarginX, 582, kCanvasW, 32}, 14, kTextSecondary);
-        if (!scan.warnings.empty()) {
-            draw_text_centered(scan.warnings.front(), {kMarginX, 626, kCanvasW, 28}, 13, kSemWarn, true);
-        }
+        draw_text_centered("No Steam manifests or USB libraries found yet", {kMarginX, 530, kCanvasW, 36}, 20, kTextPrimary);
+        draw_text_centered("Copy .exe apps to LocalState\\XWine\\LocalApps (via Xbox Device Portal File Explorer) or plug in an NTFS USB drive (D:\\LocalApps or D:\\SteamLibrary\\steamapps)",
+                           {kMarginX, 574, kCanvasW, 32}, 14, kTextSecondary);
+        draw_text_centered("Press A (or click 'Scan Steam & USB') to import Steam manifests, or press X (or click 'Scan Local .EXE Apps') to add local Windows executables to Library",
+                           {kMarginX, 614, kCanvasW, 32}, 14, kAccentCyan);
         return;
     }
 
@@ -1598,8 +1596,9 @@ void UiRenderer::draw_bottom_prompt_bar(const LauncherState& state) {
         prompt("A", "Details", kTextPrimary);
         prompt("B", "Back", kTextPrimary);
     } else if (state.active_tab() == NavTab::SteamLibrary) {
-        prompt("X", "Sample ACF", kAccentBlue);
-        prompt("A", "Scan Steam", kTextPrimary);
+        prompt("X", "Scan Local .EXE", kAccentBlue);
+        prompt("Y", "Open Details", kSemWarn);
+        prompt("A", "Scan Steam/USB", kTextPrimary);
         prompt("B", "Back", kTextPrimary);
     } else if (state.active_tab() == NavTab::Diagnostics) {
         prompt("X", "Log level", kAccentBlue);

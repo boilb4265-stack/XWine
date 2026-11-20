@@ -297,61 +297,39 @@ std::optional<std::filesystem::path> LibraryManager::ensure_save_directory(
     return target;
 }
 
+size_t LibraryManager::purge_placeholder_fixtures() {
+    const size_t before = games_.size();
+    games_.erase(
+        std::remove_if(games_.begin(), games_.end(),
+                       [](const GameEntry& g) {
+                           if (g.id.rfind("sample-", 0) == 0) return true;
+                           if (g.source == "SampleFixture" && g.id != "xwine-phase7-probe") return true;
+                           if (g.title.find("Sample ACF Metadata") != std::string::npos) return true;
+                           if (g.title.find("Fixture)") != std::string::npos) return true;
+                           return false;
+                       }),
+        games_.end());
+    return before - games_.size();
+}
+
 void LibraryManager::seed_demo_fixtures() {
-    if (!games_.empty()) return;
+    purge_placeholder_fixtures();
     const uint64_t now = now_epoch_sec();
 
-    auto make_fixture = [&](std::string id, std::string title, std::string dev, std::string genre,
-                            std::string desc, uint32_t accent, uint64_t size_mb, bool installed,
-                            bool fav, bool drm_free, CompatibilityRating rating,
-                            std::string arch, std::string gfx, std::string summary,
-                            std::vector<std::string> blockers, uint64_t played_ago, uint32_t steam_id) {
-        GameEntry g;
-        g.id = std::move(id);
-        g.title = std::move(title);
-        g.developer = std::move(dev);
-        g.publisher = g.developer;
-        g.genre = std::move(genre);
-        g.description = std::move(desc);
-        g.source = "SampleFixture";
-        g.steam_app_id = steam_id;
-        g.accent_color_rgb = accent;
-        g.size_on_disk_bytes = size_mb * 1024ULL * 1024ULL;
-        g.installed = installed;
-        g.favorite = fav;
-        g.drm_free_declared = drm_free;
-        g.added_epoch_sec = now - played_ago - 3600;
-        g.last_played_epoch_sec = played_ago > 0 ? (now - played_ago) : 0;
-        g.compatibility = rating;
-        g.compatibility_summary = std::move(summary);
-        g.blockers = std::move(blockers);
-        g.pe_inspected = true;
-        g.pe_architecture = std::move(arch);
-        g.pe_format = (g.pe_architecture.find("64") != std::string::npos) ? "PE32+" : "PE32";
-        g.pe_subsystem = "Windows GUI";
-        g.pe_graphics_api = std::move(gfx);
-        g.pe_imported_dlls = {"KERNEL32.dll", "USER32.dll"};
-        if (g.pe_graphics_api == "Direct3D 12") g.pe_imported_dlls.push_back("d3d12.dll");
-        else if (g.pe_graphics_api == "Direct3D 11") g.pe_imported_dlls.push_back("d3d11.dll");
-        else if (g.pe_graphics_api == "Direct3D 9") g.pe_imported_dlls.push_back("d3d9.dll");
-        else if (g.pe_graphics_api == "Vulkan") g.pe_imported_dlls.push_back("vulkan-1.dll");
-        g.pe_import_count = static_cast<uint32_t>(g.pe_imported_dlls.size());
-        add_or_update_game(g);
-    };
-
+    // Only register the real compiled x86-64 PE32+ Phase 7 Probe binary bundled in Probes/xwine-phase7-probe.exe
     GameEntry probe_entry;
     probe_entry.id = "xwine-phase7-probe";
     probe_entry.title = "XWine Phase-7 DX12 Probe";
     probe_entry.developer = "Project XWine Lab";
     probe_entry.publisher = "Project XWine Lab";
-    probe_entry.genre = "Diagnostic Target";
+    probe_entry.genre = "Local Windows App";
     probe_entry.description =
-        "Original 64-bit DRM-free Windows PE32+ test binary for Phase 7 validation: exercises VirtualAllocFromApp + VirtualProtectFromApp (W^X), kernel32, user32, advapi32, and XInput shims.";
-    probe_entry.source = "SampleFixture";
+        "Original 64-bit DRM-free Windows PE32+ executable (Probes/xwine-phase7-probe.exe): exercises VirtualAllocFromApp + VirtualProtectFromApp (W^X), kernel32, user32, advapi32, and XInput shims.";
+    probe_entry.source = "LocalApp";
     probe_entry.install_directory = "Probes";
     probe_entry.executable_relative_path = "xwine-phase7-probe.exe";
     probe_entry.accent_color_rgb = 0x22D3EE;
-    probe_entry.size_on_disk_bytes = 4608ULL;
+    probe_entry.size_on_disk_bytes = 5120ULL;
     probe_entry.installed = true;
     probe_entry.favorite = true;
     probe_entry.drm_free_declared = true;
@@ -359,8 +337,8 @@ void LibraryManager::seed_demo_fixtures() {
     probe_entry.last_played_epoch_sec = now - 1800;
     probe_entry.compatibility = CompatibilityRating::InspectOnly;
     probe_entry.compatibility_summary =
-        "Primary Phase 7 test target. Bundled at Probes/xwine-phase7-probe.exe inside the Xbox UWP package.";
-    probe_entry.blockers = {"Select 'Inspect PE & run feasibility check' on Xbox Series S to execute Phase 7 probe in-process."};
+        "Bundled 64-bit PE32+ executable at Probes/xwine-phase7-probe.exe. Press A to execute in-process on Xbox Series S.";
+    probe_entry.blockers = {"Ready for in-process execution via VirtualAllocFromApp / VirtualProtectFromApp (W^X)."};
     probe_entry.pe_inspected = true;
     probe_entry.pe_architecture = "x86-64 (64-bit)";
     probe_entry.pe_format = "PE32+";
@@ -369,51 +347,6 @@ void LibraryManager::seed_demo_fixtures() {
     probe_entry.pe_imported_dlls = {"KERNEL32.dll", "USER32.dll", "ADVAPI32.dll", "XINPUT1_4.dll"};
     probe_entry.pe_import_count = 4;
     add_or_update_game(probe_entry);
-
-    make_fixture(
-        "sample-indie-dx11", "Hollow Lantern (DRM-Free Fixture)", "Sample Indie Studio", "2D Action",
-        "Sample catalog metadata representing a lightweight 64-bit DRM-free Direct3D 11 indie title (~1.4 GB footprint).",
-        0x38BDF8, 1420, true, true, true, CompatibilityRating::InspectOnly,
-        "x86-64 (64-bit)", "Direct3D 11",
-        "Favorable memory footprint (< 5 GB UWP cap) and native D3D11 target; execution layer unimplemented.",
-        {"Needs user32.dll virtual window shim", "Needs DXGI CoreWindow swapchain adapter", "Execution unverified"},
-        7200, 0);
-
-    make_fixture(
-        "sample-classic-dx9", "Cobalt Runner 2008 (Fixture)", "Sample Legacy Works", "Arcade",
-        "Sample metadata illustrating a legacy 32-bit Direct3D 9 title demonstrating dual WoW64 + D3D9On12 blockers.",
-        0x6366F1, 980, true, false, true, CompatibilityRating::Blocked_32Bit,
-        "x86 (32-bit)", "Direct3D 9",
-        "Blocked by 32-bit x86 architecture (no WoW64 in Xbox UWP) and lack of native D3D9.",
-        {"32-bit PE32 requires software x86->x64 JIT", "d3d9.dll requires D3D9On12 mapping layer"},
-        14400, 0);
-
-    make_fixture(
-        "sample-vulkan-sim", "Orbital Forge (Vulkan Fixture)", "Sample Tech Labs", "Simulation",
-        "Sample metadata illustrating a 64-bit Vulkan game blocked by the absence of a native Vulkan ICD on Xbox OS.",
-        0x0EA5E9, 3200, true, true, true, CompatibilityRating::Blocked_MissingRuntime,
-        "x86-64 (64-bit)", "Vulkan",
-        "Blocked: Xbox OS provides no Vulkan ICD; Mesa Dozen translation is experimental.",
-        {"No native Vulkan ICD on Xbox Series S", "Requires experimental Mesa Dozen (Vulkan-on-D3D12)"},
-        0, 0);
-
-    make_fixture(
-        "sample-steam-drm", "Cyber Drift Arena (Steam DRM Fixture)", "Sample Commercial Studio", "Racing",
-        "Sample metadata illustrating Steamworks DRM and multi-process Steam client dependency.",
-        0xF59E0B, 14800, false, false, false, CompatibilityRating::Blocked_DRM,
-        "x86-64 (64-bit)", "Direct3D 12",
-        "Blocked: Requires Steam client IPC / Steamworks DRM. XWine never bypasses DRM.",
-        {"Imports steam_api64.dll", "Steam client cannot run inside Xbox UWP AppContainer"},
-        0, 1091500);
-
-    make_fixture(
-        "sample-anticheat", "Apex Vanguard Online (Anti-Cheat Fixture)", "Sample Online Corp", "Multiplayer",
-        "Sample metadata illustrating kernel-mode anti-cheat incompatibility in Xbox Developer Mode.",
-        0xEF4444, 42500, false, false, false, CompatibilityRating::Blocked_AntiCheat,
-        "x86-64 (64-bit)", "Direct3D 12",
-        "Technically Unsupported: Kernel anti-cheat drivers cannot load in Xbox Dev Mode UWP.",
-        {"Easy Anti-Cheat kernel driver unsupported in UWP", "Exceeds 5 GB UWP Game Mode RAM budget"},
-        0, 1172470);
 }
 
 bool LibraryManager::load_from_file(const std::filesystem::path& path, std::string* error_out) {

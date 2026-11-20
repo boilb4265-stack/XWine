@@ -144,7 +144,10 @@ public:
     std::optional<std::filesystem::path> ensure_save_directory(const std::filesystem::path& saves_root,
                                                                const std::string& game_id) const;
 
-    // Loads clearly-labeled sample catalog entries (never marked Xbox-compatible).
+    // Removes any legacy sample/fixture placeholder entries so only real local/USB/Steam binaries remain.
+    size_t purge_placeholder_fixtures();
+
+    // Seeds only real bundled executable targets (e.g. Probes/xwine-phase7-probe.exe when present on disk).
     void seed_demo_fixtures();
 
     bool load_from_file(const std::filesystem::path& path, std::string* error_out = nullptr);

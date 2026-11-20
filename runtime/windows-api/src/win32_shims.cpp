@@ -1,6 +1,13 @@
 #include "xwine/runtime/win32_shims.hpp"
 #include "xwine/platform/logger.hpp"
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -284,6 +291,41 @@ Win32ShimEnvironment::ResolvedImport Win32ShimEnvironment::resolve_import(
     if (it != shim_table_.end()) {
         return {true, it->second, key};
     }
+
+#if defined(_WIN32)
+    // Dynamic Host / Bundled DLL Import Resolution on Windows & Xbox Series S UWP:
+    // If a local 64-bit PE32+ executable imports an API from kernel32.dll, api-ms-win-crt-*,
+    // ucrtbase.dll, msvcp140.dll, vcruntime140.dll, d3d11.dll, d3d12.dll, dxgi.dll, or a DLL
+    // located in the app folder, resolve it dynamically via GetModuleHandleA / LoadLibraryA + GetProcAddress!
+    HMODULE hMod = GetModuleHandleA(dll_name.c_str());
+    if (!hMod) {
+        hMod = LoadLibraryA(dll_name.c_str());
+    }
+    if (!hMod) {
+        const std::string low_dll = lower_ascii(dll_name);
+        if (low_dll == "kernel32.dll" || low_dll == "kernelbase.dll") {
+            hMod = GetModuleHandleA("kernelbase.dll");
+            if (!hMod) hMod = GetModuleHandleA("kernel32.dll");
+        }
+    }
+    if (hMod && !symbol_name.empty()) {
+        FARPROC proc = nullptr;
+        if (symbol_name[0] == '#') {
+            const unsigned long ord = std::strtoul(symbol_name.c_str() + 1, nullptr, 10);
+            if (ord > 0 && ord <= 0xFFFFUL) {
+                proc = GetProcAddress(hMod, reinterpret_cast<LPCSTR>(static_cast<uintptr_t>(ord)));
+            }
+        } else {
+            proc = GetProcAddress(hMod, symbol_name.c_str());
+        }
+        if (proc) {
+            const uintptr_t addr = reinterpret_cast<uintptr_t>(proc);
+            shim_table_[key] = addr;
+            return {true, addr, key + " (host-onecore)"};
+        }
+    }
+#endif
+
     unsupported_.record_missing(dll_name, symbol_name);
     return {false, 0, ""};
 }
