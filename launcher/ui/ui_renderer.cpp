@@ -683,8 +683,13 @@ void UiRenderer::draw_top_bar(LauncherState& state, const input::InputManager& i
     draw_xwine_mark(kMarginX, 18, 24);
     draw_text("XWine", kMarginX + 36, 16, 22, kTextPrimary);
     draw_rect({174, 20, 1, 20}, kHairlineStrong);
-    draw_status_indicator(192, 20, "Experimental · macOS dev host · Xbox hardware unverified",
-                          kSemWarn, kTextSecondary, 14);
+    const bool on_xbox =
+        (state.context().platform->platform_id() == platform::PlatformId::XboxSeriesS_UWP_GameMode ||
+         state.context().platform->platform_id() == platform::PlatformId::XboxSeriesS_UWP_AppMode);
+    draw_status_indicator(192, 20,
+                          on_xbox ? "Experimental · Xbox Series S UWP Active · Select Phase-7 Probe to verify"
+                                  : "Experimental · macOS dev host · Xbox hardware unverified",
+                          on_xbox ? kAccentCyan : kSemWarn, kTextSecondary, 14);
 
     // Right telemetry cluster: quiet plain tabular text, no pill clutter
     const auto fstats = state.context().benchmark.frame_stats();
@@ -851,8 +856,9 @@ void UiRenderer::draw_home_view(LauncherState& state, const input::InputManager&
     draw_text("Windows PE inspection and Xbox Series S Developer Mode compatibility workspace",
               kMarginX, 192, 15, kTextSecondary);
     draw_text_right("Target: " + xbox.device_name, kMarginX + kCanvasW, 166, 14, kTextSecondary, true);
-    draw_text_right("Hardware execution verified: No (Phase 6 pending)",
-                    kMarginX + kCanvasW, 190, 14, kSemWarn);
+    draw_text_right(host.hardware_verified ? "Host UWP Sandbox: Active (Select Phase-7 Probe to execute)"
+                                           : "Hardware execution verified: No (Phase 6 pending)",
+                    kMarginX + kCanvasW, 190, 14, host.hardware_verified ? kAccentCyan : kSemWarn);
 
     // One flat hairline-divided KPI strip (app-screens.md §5: no tile-in-tile, no icons in circles)
     SDL_FRect strip{kMarginX, 232, kCanvasW, 92};
@@ -1121,8 +1127,11 @@ void UiRenderer::draw_game_detail_view(LauncherState& state) {
     draw_rounded_border(diag_box, 8.0f, 1.0f, kHairline);
 
     if (const auto& rep = state.last_launch_report()) {
+        const ColorRGBA rc = rep->executed ? kSemVerified : kSemWarn;
         draw_status_indicator(diag_box.x + 20, diag_box.y + 18,
-                              "Feasibility check result — executed: false", kSemWarn, kSemWarn, 15);
+                              std::string("Feasibility check result — executed: ") +
+                                  (rep->executed ? ("true (exit code " + std::to_string(rep->exit_code) + ")") : "false"),
+                              rc, rc, 15);
         draw_text(rep->summary, diag_box.x + 20, diag_box.y + 48, 15, kTextPrimary);
         float ry = diag_box.y + 84.0f;
         for (size_t i = 0; i < rep->blockers.size() && i < 5; ++i) {

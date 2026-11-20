@@ -339,14 +339,36 @@ void LibraryManager::seed_demo_fixtures() {
         add_or_update_game(g);
     };
 
-    make_fixture(
-        "xwine-phase7-probe", "XWine Phase-7 DX12 Probe", "Project XWine Lab", "Diagnostic Target",
-        "Planned original 64-bit DRM-free Windows test binary for Phase 7 validation: minimal kernel32 + D3D12 swapchain render test.",
-        0x22D3EE, 4, true, true, true, CompatibilityRating::InspectOnly,
-        "x86-64 (64-bit)", "Direct3D 12",
-        "Primary Phase 7 test target. Not yet compiled or executed on physical Xbox Series S.",
-        {"Requires Phase 6 Xbox UWP deployment", "Requires Phase 7 VirtualAllocFromApp PE loader"},
-        1800, 0);
+    GameEntry probe_entry;
+    probe_entry.id = "xwine-phase7-probe";
+    probe_entry.title = "XWine Phase-7 DX12 Probe";
+    probe_entry.developer = "Project XWine Lab";
+    probe_entry.publisher = "Project XWine Lab";
+    probe_entry.genre = "Diagnostic Target";
+    probe_entry.description =
+        "Original 64-bit DRM-free Windows PE32+ test binary for Phase 7 validation: exercises VirtualAllocFromApp + VirtualProtectFromApp (W^X), kernel32, user32, advapi32, and XInput shims.";
+    probe_entry.source = "SampleFixture";
+    probe_entry.install_directory = "Probes";
+    probe_entry.executable_relative_path = "xwine-phase7-probe.exe";
+    probe_entry.accent_color_rgb = 0x22D3EE;
+    probe_entry.size_on_disk_bytes = 4608ULL;
+    probe_entry.installed = true;
+    probe_entry.favorite = true;
+    probe_entry.drm_free_declared = true;
+    probe_entry.added_epoch_sec = now - 5400;
+    probe_entry.last_played_epoch_sec = now - 1800;
+    probe_entry.compatibility = CompatibilityRating::InspectOnly;
+    probe_entry.compatibility_summary =
+        "Primary Phase 7 test target. Bundled at Probes/xwine-phase7-probe.exe inside the Xbox UWP package.";
+    probe_entry.blockers = {"Select 'Inspect PE & run feasibility check' on Xbox Series S to execute Phase 7 probe in-process."};
+    probe_entry.pe_inspected = true;
+    probe_entry.pe_architecture = "x86-64 (64-bit)";
+    probe_entry.pe_format = "PE32+";
+    probe_entry.pe_subsystem = "Windows GUI";
+    probe_entry.pe_graphics_api = "Direct3D 12";
+    probe_entry.pe_imported_dlls = {"KERNEL32.dll", "USER32.dll", "ADVAPI32.dll", "XINPUT1_4.dll"};
+    probe_entry.pe_import_count = 4;
+    add_or_update_game(probe_entry);
 
     make_fixture(
         "sample-indie-dx11", "Hollow Lantern (DRM-Free Fixture)", "Sample Indie Studio", "2D Action",

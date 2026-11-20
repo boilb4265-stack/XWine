@@ -168,7 +168,7 @@ target_link_libraries(xwine_launcher_core PUBLIC
     xwine_runtime
     xwine_graphics
     xwine_steam
-    xwine_input
+    xwine_input_mapping
 )
 xwine_apply_warnings(xwine_launcher_core)
 
@@ -181,11 +181,49 @@ set_target_properties(xwine-launcher PROPERTIES
 )
 target_link_libraries(xwine-launcher PRIVATE
     xwine_launcher_core
+    xwine_input
     SDL3::SDL3
     Freetype::Freetype
     PNG::PNG
 )
 xwine_apply_warnings(xwine-launcher)
+
+# Genuine Xbox Series S UWP CoreWindow + Direct3D 11 + DXGI + XInput Launcher
+# Built on Windows when XWINE_TARGET_XBOX_UWP=ON so the packaged MSIX executable
+# calls CoreApplication::Run(IFrameworkViewSource), uses /SUBSYSTEM:WINDOWS, and
+# does NOT import desktop SDL3.dll (USER32/GDI32/IMM32/SETUPAPI) which fails on Xbox OS with 0x8027025b.
+if(WIN32 AND XWINE_TARGET_XBOX_UWP)
+    add_executable(xwine-xbox-uwp-launcher WIN32
+        launcher/ui/ui_renderer.cpp
+        launcher/src/xbox_uwp_main.cpp
+        input/controller/src/input_manager.cpp
+        input/keyboard/src/keyboard_input.cpp
+    )
+    set_target_properties(xwine-xbox-uwp-launcher PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/launcher"
+        OUTPUT_NAME "XWineLauncher"
+    )
+    target_include_directories(xwine-xbox-uwp-launcher PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/input/controller/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/input/keyboard/include
+        $<TARGET_PROPERTY:SDL3::SDL3,INTERFACE_INCLUDE_DIRECTORIES>
+    )
+    target_link_libraries(xwine-xbox-uwp-launcher PRIVATE
+        xwine_platform
+        xwine_runtime
+        xwine_graphics
+        xwine_steam
+        xwine_input_mapping
+        xwine_launcher_core
+        Freetype::Freetype
+        PNG::PNG
+        d3d11
+        dxgi
+        xinput
+        WindowsApp
+    )
+    xwine_apply_warnings(xwine-xbox-uwp-launcher)
+endif()
 
 # ==============================================================================
 # 8. CLI Tools: Diagnostics (`xwine-diag`), Phase 5 Graphics (`xwine-gfx-test`),
@@ -260,7 +298,7 @@ if(BUILD_TESTING)
     add_test(NAME XWineCompatibilityTests COMMAND xwine_compatibility_tests)
 
     add_executable(xwine_launcher_tests launcher/tests/test_launcher_state.cpp)
-    target_link_libraries(xwine_launcher_tests PRIVATE xwine_launcher_core)
+    target_link_libraries(xwine_launcher_tests PRIVATE xwine_launcher_core xwine_input)
     xwine_apply_warnings(xwine_launcher_tests)
     add_test(NAME XWineLauncherTests COMMAND xwine_launcher_tests)
 endif()

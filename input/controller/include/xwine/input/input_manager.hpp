@@ -41,8 +41,9 @@ public:
     void update(float dt_seconds, bool text_input_active, InputFrameEvents& events);
 
     const NormalizedGamepadState& gamepad_state() const { return state_; }
+    void set_external_gamepad_state(const NormalizedGamepadState& s) { state_ = s; }
     XInputStateSnapshot xinput_snapshot() const { return mapper_.to_xinput(state_); }
-    bool has_connected_controller() const { return gamepad_ != nullptr; }
+    bool has_connected_controller() const { return gamepad_ != nullptr || state_.connected; }
     std::string active_controller_name() const;
 
 private:

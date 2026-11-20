@@ -91,26 +91,51 @@ New-Item -ItemType Directory -Force -Path (Join-Path $StageDir "Tools") | Out-Nu
 
 Copy-Item (Join-Path $RepoRoot "tools\packaging\Package.appxmanifest") (Join-Path $StageDir "AppxManifest.xml")
 Copy-Item (Join-Path $RepoRoot "tools\packaging\Assets\*.png") (Join-Path $StageDir "Assets\")
-Copy-Item (Join-Path $BuildDir "launcher\xwine-launcher.exe") (Join-Path $StageDir "XWineLauncher.exe")
 
-# Bundle runtime DLLs produced beside launcher or in vcpkg bin
-Get-ChildItem (Join-Path $BuildDir "launcher\*.dll") -ErrorAction SilentlyContinue | ForEach-Object {
-    Copy-Item $_.FullName $StageDir -Force
+$UwpLauncherExe = Join-Path $BuildDir "launcher\XWineLauncher.exe"
+$SdlLauncherExe = Join-Path $BuildDir "launcher\xwine-launcher.exe"
+if (Test-Path $UwpLauncherExe) {
+    Copy-Item $UwpLauncherExe (Join-Path $StageDir "XWineLauncher.exe")
+} else {
+    Copy-Item $SdlLauncherExe (Join-Path $StageDir "XWineLauncher.exe")
 }
+
+# Bundle runtime DLLs required by XWineLauncher.exe (exclude desktop SDL3.dll which imports GDI32/IMM32/SETUPAPI)
 if (Test-Path $VcpkgBinDir) {
-    Get-ChildItem (Join-Path $VcpkgBinDir "*.dll") -ErrorAction SilentlyContinue | ForEach-Object {
-        Copy-Item $_.FullName $StageDir -Force
+    Get-ChildItem (Join-Path $VcpkgBinDir "*.dll") -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne "SDL3.dll" } |
+        ForEach-Object { Copy-Item $_.FullName $StageDir -Force }
+}
+
+# Bundle MSVC C++ Runtime DLLs (msvcp140.dll, vcruntime140.dll, vcruntime140_1.dll) so Xbox OS loader resolves CRT without VCLibs external dependency
+$VcRedistDirs = @()
+if ($env:VCToolsRedistDir -and (Test-Path $env:VCToolsRedistDir)) {
+    $VcRedistDirs += Get-ChildItem $env:VCToolsRedistDir -Recurse -Filter "msvcp140.dll" -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match "x64" -and $_.FullName -notmatch "onecore" } |
+        ForEach-Object { $_.Directory.FullName }
+}
+foreach ($dllName in @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
+    $sysDll = Join-Path $env:SystemRoot "System32\$dllName"
+    if (Test-Path $sysDll) {
+        Copy-Item $sysDll $StageDir -Force
     }
 }
+
+# Bundle Segoe UI & Consolas fonts inside Assets\Fonts\ so FreeType always loads crisp UI & monospace fonts inside Xbox UWP AppContainer
+New-Item -ItemType Directory -Force -Path (Join-Path $StageDir "Assets\Fonts") | Out-Null
+foreach ($fontName in @("segoeui.ttf", "consola.ttf", "arial.ttf")) {
+    $sysFont = Join-Path $env:SystemRoot "Fonts\$fontName"
+    if (Test-Path $sysFont) {
+        Copy-Item $sysFont (Join-Path $StageDir "Assets\Fonts\$fontName") -Force
+    }
+}
+
 if (Test-Path $ProbeExe) {
     Copy-Item $ProbeExe (Join-Path $StageDir "Probes\")
 }
 if (Test-Path $DiagExe) {
     Copy-Item $DiagExe (Join-Path $StageDir "Tools\")
-}
-$GfxExe = Join-Path $BuildDir "tools\graphics-bench\xwine-gfx-test.exe"
-if (Test-Path $GfxExe) {
-    Copy-Item $GfxExe (Join-Path $StageDir "Tools\")
+    & $DiagExe inspect (Join-Path $StageDir "XWineLauncher.exe")
 }
 
 # Locate Windows SDK MakeAppx.exe and SignTool.exe (filter for dirs containing both tools)

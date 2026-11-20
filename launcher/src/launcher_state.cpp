@@ -96,8 +96,31 @@ void LauncherState::execute_detail_action(int action_idx) {
     press_anim_ = 1.0f;
 
     if (action_idx == 0) {
-        // Honest PE inspection & launch feasibility check — NEVER pretends to run the game.
+        // Honest PE inspection & launch feasibility check — executes Phase 7 probe ONLY when
+        // running on Windows/Xbox x64 and all imports resolve to implemented Phase 4 shims!
         ctx_.library.record_inspection_event(game->id);
+        std::filesystem::path probe_candidate;
+        if (!game->install_directory.empty() && !game->executable_relative_path.empty()) {
+            probe_candidate = std::filesystem::path(game->install_directory) / game->executable_relative_path;
+        }
+        std::error_code ec;
+        if (game->id == "xwine-phase7-probe" && !probe_candidate.empty() &&
+            std::filesystem::exists(probe_candidate, ec)) {
+            const bool gm = ctx_.config.config().runtime.xbox_target_mode == "GameMode_5GB";
+            const uint64_t budget = ctx_.platform->target_xbox_series_s_profile(gm).app_usable_ram_bytes;
+            last_launch_report_ = ctx_.runtime.run_phase7_probe(probe_candidate, budget);
+            if (last_launch_report_->executed) {
+                game->compatibility = runtime::CompatibilityRating::Verified_Xbox;
+                game->compatibility_summary =
+                    "Executed natively in-process via VirtualAllocFromApp/VirtualProtectFromApp (exit code " +
+                    std::to_string(last_launch_report_->exit_code) + ").";
+                save_all_state();
+                show_toast("Phase 7 Probe Executed Natively (Exit Code " +
+                               std::to_string(last_launch_report_->exit_code) + ")",
+                           false, 5.0f);
+                return;
+            }
+        }
         last_launch_report_ = ctx_.runtime.evaluate_launch_request(*game, ctx_.platform->platform_id());
         if (!game->install_directory.empty() && !game->executable_relative_path.empty()) {
             ctx_.library.inspect_game_executable(game->id);
