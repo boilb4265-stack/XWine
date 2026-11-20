@@ -24,6 +24,15 @@
 #include <windows.h>
 #include <xinput.h>
 
+#if defined(_MSC_VER)
+#pragma function(memset)
+void* __cdecl memset(void* dst, int val, size_t count) {
+    unsigned char* p = (unsigned char*)dst;
+    while (count--) *p++ = (unsigned char)val;
+    return dst;
+}
+#endif
+
 static unsigned int str_len_a(const char* s) {
     unsigned int n = 0;
     while (s && s[n]) ++n;

@@ -171,6 +171,9 @@ void UiRenderer::load_fonts() {
     if (!ft_lib_) return;
 
     const std::vector<const char*> ui_candidates = {
+        "Assets/Fonts/segoeui.ttf",
+        "C:/Windows/Fonts/segoeui.ttf",
+        "C:/Windows/Fonts/arial.ttf",
         "/System/Library/Fonts/SFNS.ttf",
         "/System/Library/Fonts/Avenir Next.ttc",
         "/System/Library/Fonts/HelveticaNeue.ttc",
@@ -185,6 +188,9 @@ void UiRenderer::load_fonts() {
     }
 
     const std::vector<const char*> mono_candidates = {
+        "Assets/Fonts/consola.ttf",
+        "C:/Windows/Fonts/consola.ttf",
+        "C:/Windows/Fonts/lucon.ttf",
         "/System/Library/Fonts/SFNSMono.ttf",
         "/System/Library/Fonts/Menlo.ttc",
         "/System/Library/Fonts/Supplemental/Courier New.ttf",

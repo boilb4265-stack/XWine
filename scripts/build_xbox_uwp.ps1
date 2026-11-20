@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Builds and signs Project XWine for Xbox Series S Developer Mode (x64 MSIX/APPX).
+    Builds, tests, packs, and signs Project XWine for Xbox Series S Developer Mode (x64 MSIX).
 .DESCRIPTION
     Must be executed on a Windows 10/11 x64 host (or GitHub Actions windows-latest runner)
     with Visual Studio 2022 (Desktop C++ + UWP C++ workload), Windows SDK 10.0.22621+,
@@ -18,10 +18,20 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Invoke-Checked {
+    param([string]$Label, [scriptblock]$Cmd)
+    Write-Host "[XWine] $Label" -ForegroundColor Cyan
+    & $Cmd
+    if ($LASTEXITCODE -ne 0) {
+        throw "Step failed ($Label) with exit code $LASTEXITCODE"
+    }
+}
+
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $BuildDir = Join-Path $RepoRoot "build-xbox-x64"
-$StageDir = Join-Path $RepoRoot "$OutputDir\staging"
 $DistDir  = Join-Path $RepoRoot $OutputDir
+$StageDir = Join-Path $DistDir "staging"
 
 Write-Host "[XWine] Building Xbox Series S x64 target (Config=$Configuration)" -ForegroundColor Cyan
 
@@ -32,8 +42,9 @@ if (-not $VcpkgRoot -or -not (Test-Path (Join-Path $VcpkgRoot "scripts\buildsyst
 $ToolchainFile = Join-Path $VcpkgRoot "scripts\buildsystems\vcpkg.cmake"
 $Triplet = if ($TargetUwpStore) { "x64-uwp" } else { "x64-windows" }
 
-Write-Host "[XWine] Ensuring vcpkg dependencies (sdl3, freetype, libpng) for triplet $Triplet..." -ForegroundColor Cyan
-& (Join-Path $VcpkgRoot "vcpkg.exe") install "sdl3:$Triplet" "freetype:$Triplet" "libpng:$Triplet"
+Invoke-Checked "Installing vcpkg dependencies (sdl3, freetype, libpng) for $Triplet" {
+    & (Join-Path $VcpkgRoot "vcpkg.exe") install "sdl3:$Triplet" "freetype:$Triplet" "libpng:$Triplet"
+}
 
 $CmakeArgs = @(
     "-S", $RepoRoot,
@@ -48,30 +59,58 @@ if ($TargetUwpStore) {
     $CmakeArgs += @("-DCMAKE_SYSTEM_NAME=WindowsStore", "-DCMAKE_SYSTEM_VERSION=10.0")
 }
 
-Write-Host "[XWine] Configuring CMake..." -ForegroundColor Cyan
-cmake @CmakeArgs
-Write-Host "[XWine] Compiling XWine + Phase 7 Windows Probe..." -ForegroundColor Cyan
-cmake --build $BuildDir --parallel
+Invoke-Checked "Configuring CMake + Ninja (MSVC x64)" { cmake @CmakeArgs }
+Invoke-Checked "Compiling XWine + Phase 7 Windows x64 Probe" { cmake --build $BuildDir --parallel }
 
-Write-Host "[XWine] Running automated CTest suite on Windows host..." -ForegroundColor Cyan
-ctest --test-dir $BuildDir --output-on-failure
+$VcpkgBinDir = Join-Path $VcpkgRoot "installed\$Triplet\bin"
+if (Test-Path $VcpkgBinDir) {
+    $env:PATH = "$VcpkgBinDir;$env:PATH"
+}
+
+Invoke-Checked "Running automated CTest suite on Windows x64" {
+    ctest --test-dir $BuildDir --output-on-failure -V
+}
+
+# Verify Phase 7 Probe with xwine-diag map (live Windows x64 relocation, IAT shim & W^X test!)
+$ProbeExe = Join-Path $BuildDir "tools\phase7-probe\xwine-phase7-probe.exe"
+$DiagExe  = Join-Path $BuildDir "tools\diagnostics\xwine-diag.exe"
+if ((Test-Path $ProbeExe) -and (Test-Path $DiagExe)) {
+    Invoke-Checked "Inspecting & executing Phase 7 PE32+ probe via xwine-diag" {
+        & $DiagExe inspect $ProbeExe
+        & $DiagExe map $ProbeExe
+    }
+}
 
 # Stage MSIX package layout
+New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 if (Test-Path $StageDir) { Remove-Item -Recurse -Force $StageDir }
 New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $StageDir "Assets") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $StageDir "Probes") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $StageDir "Tools") | Out-Null
 
 Copy-Item (Join-Path $RepoRoot "tools\packaging\Package.appxmanifest") (Join-Path $StageDir "AppxManifest.xml")
 Copy-Item (Join-Path $RepoRoot "tools\packaging\Assets\*.png") (Join-Path $StageDir "Assets\")
 Copy-Item (Join-Path $BuildDir "launcher\xwine-launcher.exe") (Join-Path $StageDir "XWineLauncher.exe")
 
-# Bundle runtime DLLs produced beside launcher
+# Bundle runtime DLLs produced beside launcher or in vcpkg bin
 Get-ChildItem (Join-Path $BuildDir "launcher\*.dll") -ErrorAction SilentlyContinue | ForEach-Object {
-    Copy-Item $_.FullName $StageDir
+    Copy-Item $_.FullName $StageDir -Force
 }
-if (Test-Path (Join-Path $BuildDir "tools\phase7-probe\xwine-phase7-probe.exe")) {
-    Copy-Item (Join-Path $BuildDir "tools\phase7-probe\xwine-phase7-probe.exe") (Join-Path $StageDir "Probes\")
+if (Test-Path $VcpkgBinDir) {
+    Get-ChildItem (Join-Path $VcpkgBinDir "*.dll") -ErrorAction SilentlyContinue | ForEach-Object {
+        Copy-Item $_.FullName $StageDir -Force
+    }
+}
+if (Test-Path $ProbeExe) {
+    Copy-Item $ProbeExe (Join-Path $StageDir "Probes\")
+}
+if (Test-Path $DiagExe) {
+    Copy-Item $DiagExe (Join-Path $StageDir "Tools\")
+}
+$GfxExe = Join-Path $BuildDir "tools\graphics-bench\xwine-gfx-test.exe"
+if (Test-Path $GfxExe) {
+    Copy-Item $GfxExe (Join-Path $StageDir "Tools\")
 }
 
 # Locate Windows SDK MakeAppx.exe and SignTool.exe
@@ -88,29 +127,32 @@ $CerPath  = Join-Path $DistDir "XWine-DevMode-SelfSigned.cer"
 $PfxPath  = Join-Path $DistDir "XWine-DevMode-SelfSigned.pfx"
 
 if (Test-Path $MsixPath) { Remove-Item -Force $MsixPath }
-Write-Host "[XWine] Packing $MsixPath..." -ForegroundColor Cyan
-& $MakeAppx pack /d $StageDir /p $MsixPath /o
+Invoke-Checked "Packing $MsixPath with makeappx.exe" {
+    & $MakeAppx pack /d $StageDir /p $MsixPath /o
+}
 
-# Create self-signed Dev Mode test certificate (CN=ProjectXWineDev matches AppxManifest Publisher)
-Write-Host "[XWine] Generating & applying self-signed Xbox Dev Mode certificate..." -ForegroundColor Cyan
+Write-Host "[XWine] Generating self-signed Xbox Dev Mode certificate..." -ForegroundColor Cyan
 $CertPassword = ConvertTo-SecureString -String "XWineDevModeCert!" -Force -AsPlainText
 $Cert = New-SelfSignedCertificate `
     -Type Custom `
     -Subject "CN=ProjectXWineDev" `
+    -KeyAlgorithm RSA `
+    -KeyLength 2048 `
     -KeyUsage DigitalSignature `
     -FriendlyName "Project XWine Dev Mode Sideloading Cert" `
     -CertStoreLocation "Cert:\CurrentUser\My" `
-    -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+    -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}ca=false")
 
 Export-PfxCertificate -Cert $Cert -FilePath $PfxPath -Password $CertPassword | Out-Null
 Export-Certificate -Cert $Cert -FilePath $CerPath | Out-Null
 
-& $SignTool sign /fd SHA256 /a /f $PfxPath /p "XWineDevModeCert!" $MsixPath
+Invoke-Checked "Signing $MsixPath with signtool.exe (SHA256)" {
+    & $SignTool sign /fd SHA256 /f $PfxPath /p "XWineDevModeCert!" $MsixPath
+}
 
 Write-Host ""
 Write-Host "=====================================================================" -ForegroundColor Green
 Write-Host " Xbox Dev Mode Package Ready: $MsixPath" -ForegroundColor Green
 Write-Host " Dev Mode Certificate       : $CerPath" -ForegroundColor Green
-Write-Host " Next: Run .\scripts\deploy_xbox_portal.ps1 -XboxIp <CONSOLE_IP>" -ForegroundColor Yellow
-Write-Host "       Then switch XWine from 'App' to 'Game' in Xbox Device Portal." -ForegroundColor Yellow
+Write-Host " Phase 7 Test Probe         : $ProbeExe" -ForegroundColor Green
 Write-Host "=====================================================================" -ForegroundColor Green

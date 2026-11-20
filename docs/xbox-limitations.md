@@ -58,10 +58,11 @@ Xbox UWP exposes the **OneCoreUAP / WindowsApp.lib** API partition, omitting cor
   2. **NTFS filesystem** (FAT32/exFAT fail ACL checks).
   3. Explicit Windows NTFS ACL granting **`ALL APPLICATION PACKAGES`** recursive Read/Write/Modify permissions applied on a PC prior to connecting the drive to Xbox.
 
-### 2.5 Graphics Restrictions
+### 2.5 Graphics & Windowing Restrictions
 - **No Vulkan Driver / ICD** exists on Xbox OS.
 - **No Native OpenGL Driver** exists on Xbox OS.
 - **DXGI Swapchains** cannot bind to a Win32 `HWND`; they must bind to a UWP `CoreWindow` (`CreateSwapChainForCoreWindow`) or `ISwapChainPanelNative`.
+- **SDL3 Dropped WinRT / UWP (`CoreWindow`) Support:** Upstream SDL3 officially removed WinRT/UWP support (`vcpkg` declares `"supports": "!uwp"` for `sdl3`), supporting standard Win32 (`x64-windows`) and official Microsoft GDK instead. Therefore, our automated `windows-latest` CI produces a signed `x64` MSIX package (`XWine-XboxSeriesS-x64-DevMode.msix`) + `xwine-phase7-probe.exe` built against `x64-windows` + `OneCoreUAP`; running the GUI launcher natively inside strict `Windows.Xbox` AppContainer without GDK requires replacing the SDL3 window host with a thin native UWP `CoreWindow` + Direct3D 11/12 host shell (while reusing 100% of `xwine_platform`, `xwine_runtime`, `xwine_graphics`, `xwine_steam`, and `xwine_launcher_core`).
 
 ### 2.6 DRM, Storefronts & Anti-Cheat
 - **Steam Client (`steam.exe`)**: 32-bit, multi-process Chromium Embedded Framework (CEF), depends on desktop Win32 and Windows Services—cannot execute inside Xbox UWP.
