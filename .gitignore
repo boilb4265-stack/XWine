@@ -1,0 +1,40 @@
+# Build outputs
+build/
+build-*/
+cmake-build-*/
+out/
+dist/
+*.o
+*.obj
+*.a
+*.lib
+*.dylib
+*.so
+*.dll
+*.exe
+*.appx
+*.msix
+*.msixvc
+*.xvc
+*.pdb
+*.dSYM/
+
+# IDE & OS
+.DS_Store
+.vscode/
+.idea/
+*.xcodeproj/
+*.xcworkspace/
+compile_commands.json
+
+# Runtime data & local artifacts
+logs/
+screenshots/
+*.log
+Testing/
+
+# Never commit third-party game files or extracted assets
+games/
+steamapps/
+*.vdf.local
+*.acf.local
