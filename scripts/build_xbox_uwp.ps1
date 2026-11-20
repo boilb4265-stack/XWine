@@ -113,12 +113,18 @@ if (Test-Path $GfxExe) {
     Copy-Item $GfxExe (Join-Path $StageDir "Tools\")
 }
 
-# Locate Windows SDK MakeAppx.exe and SignTool.exe
+# Locate Windows SDK MakeAppx.exe and SignTool.exe (filter for dirs containing both tools)
 $SdkBin = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.0.*\x64" -Directory -ErrorAction SilentlyContinue |
-    Sort-Object Name -Descending | Select-Object -First 1
+    Where-Object {
+        (Test-Path (Join-Path $_.FullName "makeappx.exe")) -and
+        (Test-Path (Join-Path $_.FullName "signtool.exe"))
+    } |
+    Sort-Object { [version](Split-Path $_.Parent.FullName -Leaf) } -Descending |
+    Select-Object -First 1
 if (-not $SdkBin) {
     throw "Windows 10/11 SDK x64 tools (makeappx.exe / signtool.exe) not found."
 }
+Write-Host "[XWine] Using Windows SDK tools from: $($SdkBin.FullName)" -ForegroundColor Cyan
 $MakeAppx = Join-Path $SdkBin.FullName "makeappx.exe"
 $SignTool = Join-Path $SdkBin.FullName "signtool.exe"
 

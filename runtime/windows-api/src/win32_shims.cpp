@@ -265,9 +265,11 @@ void Win32ShimEnvironment::register_builtin_shims() {
     add("advapi32.dll", "RegCreateKeyExW",           &xwine_shim_RegCreateKeyExW);
     add("advapi32.dll", "RegCloseKey",               &xwine_shim_RegCloseKey);
 
-    // xinput1_4.dll / xinput9_1_0.dll
+    // xinput1_4.dll / xinput9_1_0.dll (both named and Windows SDK ordinal #2 for XInputGetState)
     add("xinput1_4.dll", "XInputGetState",           &xwine_shim_XInputGetState);
+    add("xinput1_4.dll", "#2",                       &xwine_shim_XInputGetState);
     add("xinput9_1_0.dll", "XInputGetState",         &xwine_shim_XInputGetState);
+    add("xinput9_1_0.dll", "#2",                     &xwine_shim_XInputGetState);
 }
 
 Win32ShimEnvironment::ResolvedImport Win32ShimEnvironment::resolve_import(
